@@ -335,7 +335,7 @@ export function App() {
 
       <div className="sectionHeader">
         <div className="sectionTitle">Part 3 — Data Visualization (9B)</div>
-        <div className="sectionNote">Use filters below to explore trends and comparisons.</div>
+        <div className="sectionNote" />
       </div>
       <div className="grid">
         <div className="card span-12">
@@ -397,9 +397,7 @@ export function App() {
                   Rows in scope: <strong>{computed?.measurementsInScopeCount ?? 0}</strong>
                 </span>
               </div>
-              <div className="kpiSub" style={{ marginTop: 8 }}>
-                “Most recent measurements” is always the latest snapshot. Time range only affects the trend charts.
-              </div>
+              {/* intentionally no extra helper text here */}
             </div>
           </div>
 
