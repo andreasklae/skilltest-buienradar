@@ -8,17 +8,22 @@ on:
 
 permissions:
   contents: write
+  pages: write
+  id-token: write
 
 concurrency:
   group: update-data
   cancel-in-progress: true
 
 jobs:
-  update:
+  update_and_build:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      - name: Setup Pages
+        uses: actions/configure-pages@v5
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -38,6 +43,29 @@ jobs:
       - name: Export DB to frontend JSON
         run: python src/export_db_to_json.py
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install frontend dependencies
+        working-directory: web
+        run: |
+          if [ -f package-lock.json ]; then npm ci; else npm install; fi
+
+      - name: Build React site
+        working-directory: web
+        env:
+          VITE_BASE_PATH: "/${{ github.event.repository.name }}/"
+        run: npm run build
+
+      - name: Upload Pages artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: web/dist
+
       - name: Commit updated database + exports (main branch)
         run: |
           git config user.name "github-actions[bot]"
@@ -53,5 +81,14 @@ jobs:
 
           git commit -m "Update weather dataset"
           git push
+
+  deploy:
+    needs: update_and_build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+    steps:
+      - name: Deploy to GitHub Pages
+        uses: actions/deploy-pages@v4
 
 
