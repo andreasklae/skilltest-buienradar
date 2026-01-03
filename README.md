@@ -11,6 +11,8 @@ Zypp Skill Test: Dutch Weather Analysis
 
 > Skilltest designed for Zypp's Recruitment process
 
+Live dashboard (GitHub Pages): `https://andreasklae.github.io/skilltest-buienradar/`
+
 **Time Cap:** 4 hours  
 **Coding Skills:** Python, SQL, optional: HTML, CSS, JavaScript  
 **Fundamental Skills:**

@@ -1,0 +1,57 @@
+name: Update weather data (SQLite + JSON exports)
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Buienradar updates ~ every 20 minutes
+    - cron: "*/20 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: update-data
+  cancel-in-progress: true
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Fetch latest JSON snapshot
+        run: python src/fetch_JSON.py
+
+      - name: Update SQLite database
+        run: python src/load_json_to_sql.py
+
+      - name: Export DB to frontend JSON
+        run: python src/export_db_to_json.py
+
+      - name: Commit updated database + exports (main branch)
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Commit the database + the exported JSON used by the frontend
+          git add data/weather.sqlite web/public/data/*.json web/public/ERD1.png
+
+          if git diff --cached --quiet; then
+            echo "No changes to commit."
+            exit 0
+          fi
+
+          git commit -m "Update weather dataset"
+          git push
+
+

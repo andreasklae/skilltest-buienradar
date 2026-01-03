@@ -98,6 +98,70 @@ a { color: inherit; }
   font-size: 12px;
 }
 
+.controls {
+  display: grid;
+  grid-template-columns: repeat(12, 1fr);
+  gap: 10px;
+  align-items: end;
+}
+
+.control {
+  grid-column: span 3;
+}
+
+@media (max-width: 900px) {
+  .control { grid-column: span 6; }
+}
+
+@media (max-width: 520px) {
+  .control { grid-column: span 12; }
+}
+
+.label {
+  display: block;
+  font-size: 11px;
+  color: var(--muted);
+  margin-bottom: 6px;
+}
+
+select {
+  width: 100%;
+  padding: 10px 10px;
+  border-radius: 10px;
+  background: rgba(15, 23, 42, 0.55);
+  color: var(--text);
+  border: 1px solid rgba(255,255,255,0.12);
+  outline: none;
+}
+
+select:focus {
+  border-color: rgba(124,58,237,0.60);
+  box-shadow: 0 0 0 4px rgba(124,58,237,0.18);
+}
+
+.row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 8px;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-radius: 999px;
+  background: rgba(255,255,255,0.06);
+  border: 1px solid rgba(255,255,255,0.10);
+  color: rgba(255,255,255,0.78);
+  font-size: 12px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
 .error {
   border-color: rgba(239,68,68,0.35);
   background: rgba(239,68,68,0.08);
