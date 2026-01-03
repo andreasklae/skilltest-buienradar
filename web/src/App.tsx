@@ -2,15 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import type { Measurement, Meta, Station } from "./types";
 import { byStationId, latestTimestamp, maxBy, mean } from "./utils";
 import {
-  Bar,
-  BarChart,
   CartesianGrid,
   Line,
   LineChart,
-  Legend,
   ResponsiveContainer,
-  Scatter,
-  ScatterChart,
   Tooltip,
   XAxis,
   YAxis,
@@ -37,53 +32,24 @@ function fmt(n: number | null, digits = 1): string {
   return n.toFixed(digits);
 }
 
-function metricLabel(k: MetricKey): string {
-  switch (k) {
-    case "temperature":
-      return "Temperature (°C)";
-    case "feeltemperature":
-      return "Feel temperature (°C)";
-    case "precipitation":
-      return "Precipitation (mm)";
-    case "humidity":
-      return "Humidity (%)";
-    case "windgusts":
-      return "Wind gusts (m/s)";
-    case "sunpower":
-      return "Sun power";
-    case "windspeedBft":
-      return "Wind (Bft)";
-  }
-}
-
-function metricUnitSuffix(k: MetricKey): string {
-  switch (k) {
-    case "temperature":
-    case "feeltemperature":
-      return "°C";
-    case "humidity":
-      return "%";
-    case "precipitation":
-      return "mm";
-    case "windspeedBft":
-      return "Bft";
-    case "windgusts":
-      return "m/s";
-    case "sunpower":
-      return "";
-  }
-}
-
 function toMillis(tsIso: string): number {
   // ISO-8601 (no timezone) -> treated as local by Date; good enough for relative windows.
   return new Date(tsIso).getTime();
 }
 
+const METRICS: Array<{ key: MetricKey; title: string; unit: string; color: string }> = [
+  { key: "temperature", title: "Temperature", unit: "°C", color: "#7c3aed" },
+  { key: "feeltemperature", title: "Feel temperature", unit: "°C", color: "#a855f7" },
+  { key: "humidity", title: "Humidity", unit: "%", color: "#22c55e" },
+  { key: "precipitation", title: "Precipitation", unit: "mm", color: "#60a5fa" },
+  { key: "windgusts", title: "Wind gusts", unit: "m/s", color: "#f97316" },
+  { key: "windspeedBft", title: "Wind speed", unit: "Bft", color: "#eab308" },
+  { key: "sunpower", title: "Sun power", unit: "", color: "#f59e0b" },
+];
+
 export function App() {
   const [state, setState] = useState<LoadState>({ status: "loading" });
-  const [region, setRegion] = useState<string>("All regions");
-  const [stationId, setStationId] = useState<string>("all");
-  const [metric, setMetric] = useState<MetricKey>("temperature");
+  const [selectedRegion, setSelectedRegion] = useState<string>(""); // Part 3: one region at a time
   const [timeRange, setTimeRange] = useState<TimeRangeKey>("24h");
 
   useEffect(() => {
@@ -124,21 +90,48 @@ export function App() {
     const latestTs = latestTimestamp(state.measurements);
     const latest = latestTs ? state.measurements.filter((m) => m.timestamp === latestTs) : state.measurements;
 
-    const regions = Array.from(
-      new Set(state.stations.map((s) => (s.regio || "Unknown").trim()).filter(Boolean)),
-    ).sort((a, b) => a.localeCompare(b));
+    // -----------------------------
+    // Part 2 answers (UNFILTERED)
+    // -----------------------------
+    const hottestAll = maxBy(latest, (m) => (typeof m.temperature === "number" ? m.temperature : -Infinity));
+    const hottestAllStation = hottestAll ? stationsById.get(hottestAll.stationid) : undefined;
 
-    const regionFilter = region === "All regions" ? null : region;
-    const filteredStations = regionFilter
-      ? state.stations.filter((s) => (s.regio || "Unknown").trim() === regionFilter)
-      : state.stations;
+    const avgTempAll = mean(state.measurements.map((m) => m.temperature));
 
-    const stationOptions = filteredStations
-      .slice()
-      .sort((a, b) => a.stationname.localeCompare(b.stationname));
+    const biggestDiffAll = maxBy(state.measurements, (m) => {
+      if (typeof m.temperature !== "number" || typeof m.feeltemperature !== "number") return -Infinity;
+      return Math.abs(m.feeltemperature - m.temperature);
+    });
+    const diffAllStation = biggestDiffAll ? stationsById.get(biggestDiffAll.stationid) : undefined;
 
-    const stationIdsInScope = new Set(filteredStations.map((s) => s.stationid));
-    const selectedStationId = stationId === "all" ? null : Number(stationId);
+    const northSeaStation =
+      state.stations.find((s) => (s.regio || "").toLowerCase() === "noordzee") ||
+      state.stations.find((s) => (s.stationname || "").toLowerCase().includes("zeeplatform"));
+
+    // -----------------------------
+    // Part 3 filters + charts only
+    // -----------------------------
+    // Region list (we pick one representative station per region).
+    // If multiple stations exist for a region, we pick the first alphabetically.
+    const byRegion = new Map<string, Station[]>();
+    for (const s of state.stations) {
+      const r = (s.regio || "Unknown").trim() || "Unknown";
+      const arr = byRegion.get(r) || [];
+      arr.push(s);
+      byRegion.set(r, arr);
+    }
+    const regionEntries = Array.from(byRegion.entries())
+      .map(([region, stations]) => {
+        const station = stations.slice().sort((a, b) => a.stationname.localeCompare(b.stationname))[0];
+        return { region, station };
+      })
+      .sort((a, b) => a.region.localeCompare(b.region));
+
+    const selectedEntry =
+      regionEntries.find((e) => e.region === selectedRegion) || regionEntries[0] || null;
+
+    const selectedStationId = selectedEntry?.station.stationid ?? null;
+    const stationIdsInScope = selectedStationId !== null ? new Set([selectedStationId]) : new Set<number>();
 
     const latestMs = latestTs ? toMillis(latestTs) : null;
     const cutoffMs =
@@ -152,123 +145,78 @@ export function App() {
       (m) =>
         stationIdsInScope.has(m.stationid) &&
         inTimeWindow(m) &&
-        (selectedStationId === null || m.stationid === selectedStationId),
+        true,
     );
 
-    // Q5: station with highest temperature (using latest snapshot for a “current” answer)
-    const hottest = maxBy(
-      latest.filter((m) => stationIdsInScope.has(m.stationid)),
-      (m) => (typeof m.temperature === "number" ? m.temperature : -Infinity),
-    );
-
-    // Q6: average temperature (across all stored measurements)
-    const avgTemp = mean(measurementsInScope.map((m) => m.temperature));
-
-    // Q7: biggest difference between feel temperature and actual temperature
-    // Using absolute difference to interpret “biggest difference” robustly.
-    const biggestDiff = maxBy(measurementsInScope, (m) => {
-      if (typeof m.temperature !== "number" || typeof m.feeltemperature !== "number") return -Infinity;
-      return Math.abs(m.feeltemperature - m.temperature);
-    });
-
-    // Q8: station located in the North Sea -> regio == "Noordzee"
-    const northSeaStation =
-      state.stations.find((s) => (s.regio || "").toLowerCase() === "noordzee") ||
-      state.stations.find((s) => (s.stationname || "").toLowerCase().includes("zeeplatform"));
-
-    const hottestStation = hottest ? stationsById.get(hottest.stationid) : undefined;
-    const diffStation = biggestDiff ? stationsById.get(biggestDiff.stationid) : undefined;
-
-    // Chart 1: metric over time (selected station OR average across scope)
-    const byTs = new Map<string, { sum: number; n: number }>();
-    const stationSeriesByTs = new Map<string, number>();
-    for (const m of measurementsInScope) {
-      const key = m.timestamp;
-      const v = m[metric];
-      if (typeof v !== "number") continue;
-      if (selectedStationId !== null) {
-        stationSeriesByTs.set(key, v);
-      } else {
-        const cur = byTs.get(key) || { sum: 0, n: 0 };
-        cur.sum += v;
-        cur.n += 1;
-        byTs.set(key, cur);
+    // Build wide time-series for each metric:
+    // - columns: timestamp, avg, s<stationid>...
+    function buildWideSeries(metricKey: MetricKey) {
+      type Row = Record<string, unknown> & { timestamp: string; _sum: number; _n: number };
+      const byTs = new Map<string, Row>();
+      for (const m of measurementsInScope) {
+        const v = m[metricKey];
+        if (typeof v !== "number") continue;
+        const row: Row = byTs.get(m.timestamp) || ({ timestamp: m.timestamp, _sum: 0, _n: 0 } as Row);
+        const stationKey = `s${m.stationid}`;
+        (row as any)[stationKey] = v; // dynamic station columns
+        row._sum += v;
+        row._n += 1;
+        byTs.set(m.timestamp, row);
       }
+      const rows = Array.from(byTs.values())
+        .sort((a, b) => (a.timestamp < b.timestamp ? -1 : a.timestamp > b.timestamp ? 1 : 0))
+        .map((r) => {
+          const out: any = { ...r };
+          out.avg = r._n ? r._sum / r._n : null;
+          delete out._sum;
+          delete out._n;
+          return out;
+        });
+      return rows;
     }
 
-    const metricSeries =
-      selectedStationId !== null
-        ? Array.from(stationSeriesByTs.entries())
-            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-            .map(([timestamp, val]) => ({ timestamp, value: val }))
-        : Array.from(byTs.entries())
-            .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-            .map(([timestamp, v]) => ({ timestamp, value: v.sum / v.n }));
+    // Part 3: latest snapshot row for the selected station
+    const latestStationMeasurement =
+      selectedStationId !== null && latestTs
+        ? state.measurements.find((m) => m.stationid === selectedStationId && m.timestamp === latestTs) || null
+        : null;
 
-    // Chart 2: top hottest stations at latest snapshot (filtered by region)
-    const latestInScope = latest.filter((m) => stationIdsInScope.has(m.stationid));
-    const topHot = latestInScope
-      .filter((m) => typeof m.temperature === "number")
-      .slice()
-      .sort((a, b) => (b.temperature! - a.temperature!))
-      .slice(0, 10)
-      .map((m) => ({
-        station: stationsById.get(m.stationid)?.stationname ?? String(m.stationid),
-        temperature: m.temperature!,
-      }));
-
-    // Chart 3: scatter temp vs feel (latest snapshot, filtered by region)
-    const scatter = latestInScope
-      .filter((m) => typeof m.temperature === "number" && typeof m.feeltemperature === "number")
-      .map((m) => ({
-        station: stationsById.get(m.stationid)?.stationname ?? String(m.stationid),
-        temperature: m.temperature as number,
-        feeltemperature: m.feeltemperature as number,
-      }));
-
-    // Chart 4: precipitation + sunpower over time (avg across scope)
-    const envByTs = new Map<string, { pSum: number; pN: number; sSum: number; sN: number }>();
-    for (const m of measurementsInScope) {
-      const key = m.timestamp;
-      const cur = envByTs.get(key) || { pSum: 0, pN: 0, sSum: 0, sN: 0 };
-      if (typeof m.precipitation === "number") {
-        cur.pSum += m.precipitation;
-        cur.pN += 1;
-      }
-      if (typeof m.sunpower === "number") {
-        cur.sSum += m.sunpower;
-        cur.sN += 1;
-      }
-      envByTs.set(key, cur);
-    }
-    const envSeries = Array.from(envByTs.entries())
-      .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
-      .map(([timestamp, v]) => ({
-        timestamp,
-        precipitationAvg: v.pN ? v.pSum / v.pN : null,
-        sunpowerAvg: v.sN ? v.sSum / v.sN : null,
-      }));
+    const wideSeriesByMetric = Object.fromEntries(METRICS.map((m) => [m.key, buildWideSeries(m.key)])) as Record<
+      MetricKey,
+      any[]
+    >;
 
     const selectedStation = selectedStationId !== null ? stationsById.get(selectedStationId) : null;
 
     return {
       latestTs,
-      hottest,
-      hottestStation,
-      avgTemp,
-      biggestDiff,
-      diffStation,
       northSeaStation,
-      regions,
-      stationOptions,
-      measurementsInScopeCount: measurementsInScope.length,
+      // Part 2 (unfiltered)
+      hottestAll,
+      hottestAllStation,
+      avgTempAll,
+      biggestDiffAll,
+      diffAllStation,
+      // Part 3 (filtered)
+      regionEntries,
+      selectedEntry,
+      selectedStationId,
       selectedStation,
-      metricSeries,
-      topHot,
-      scatter,
-      envSeries,
+      latestStationMeasurement,
+      measurementsInScopeCount: measurementsInScope.length,
+      wideSeriesByMetric,
     };
-  }, [state, region, stationId, metric, timeRange]);
+  }, [state, selectedRegion, timeRange]);
+
+  // Initialize selectedRegion once data is loaded
+  useEffect(() => {
+    if (state.status !== "ready") return;
+    if (selectedRegion) return;
+    const regions = Array.from(
+      new Set(state.stations.map((s) => (s.regio || "Unknown").trim() || "Unknown")),
+    ).sort((a, b) => a.localeCompare(b));
+    if (regions[0]) setSelectedRegion(regions[0]);
+  }, [state, selectedRegion]);
 
   if (state.status === "loading") {
     return (
@@ -323,257 +271,245 @@ export function App() {
         </div>
       </div>
 
+      <div className="sectionHeader">
+        <div className="sectionTitle">Part 1 — Data Integration</div>
+        <div className="sectionNote">Database schema used for the dataset</div>
+      </div>
       <div className="grid">
-        <div className="card span-12">
-          <h2>Explore the data</h2>
-          <div className="controls">
-            <div className="control">
-              <label className="label">Region</label>
-              <select value={region} onChange={(e) => {
-                setRegion(e.target.value);
-                setStationId("all");
-              }}>
-                <option>All regions</option>
-                {computed?.regions.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="control">
-              <label className="label">Station</label>
-              <select value={stationId} onChange={(e) => setStationId(e.target.value)}>
-                <option value="all">All stations (average)</option>
-                {computed?.stationOptions.map((s) => (
-                  <option key={s.stationid} value={String(s.stationid)}>
-                    {s.stationname}
-                  </option>
-                ))}
-              </select>
-            </div>
-
-            <div className="control">
-              <label className="label">Metric</label>
-              <select value={metric} onChange={(e) => setMetric(e.target.value as MetricKey)}>
-                <option value="temperature">Temperature</option>
-                <option value="feeltemperature">Feel temperature</option>
-                <option value="humidity">Humidity</option>
-                <option value="precipitation">Precipitation</option>
-                <option value="windgusts">Wind gusts</option>
-                <option value="windspeedBft">Wind (Bft)</option>
-                <option value="sunpower">Sun power</option>
-              </select>
-            </div>
-
-            <div className="control">
-              <label className="label">Time range</label>
-              <select value={timeRange} onChange={(e) => setTimeRange(e.target.value as TimeRangeKey)}>
-                <option value="6h">Last 6 hours</option>
-                <option value="24h">Last 24 hours</option>
-                <option value="7d">Last 7 days</option>
-                <option value="all">All time</option>
-              </select>
-            </div>
-          </div>
-
-          <div className="row">
-            <span className="chip">
-              Scope:{" "}
-              <strong>
-                {region === "All regions" ? "All regions" : region}
-                {computed?.selectedStation ? ` · ${computed.selectedStation.stationname}` : " · All stations"}
-              </strong>
-            </span>
-            <span className="chip">
-              Rows in scope: <strong>{computed?.measurementsInScopeCount ?? 0}</strong>
-            </span>
-            <span className="chip muted">
-              Trend chart shows: <strong>{metricLabel(metric)}</strong>
-            </span>
-          </div>
+        <div className="card span-12 imgWrap">
+          <h2>ERD</h2>
+          <img src={`${import.meta.env.BASE_URL}ERD1.png`} alt="Database ERD" />
         </div>
+      </div>
 
+      <div className="sectionHeader">
+        <div className="sectionTitle">Part 2 — Data Analysis (Q5–Q8)</div>
+        <div className="sectionNote">These answers are based on the full dataset (no filters).</div>
+      </div>
+      <div className="grid">
         <div className="card span-4">
-          <h2>Q5 — Highest temperature (latest snapshot, within region)</h2>
-          <div className="kpi">
-            {fmt(computed?.hottest?.temperature ?? null)}°C
-          </div>
+          <h2>Q5 — Highest temperature (latest snapshot)</h2>
+          <div className="kpi">{fmt(computed?.hottestAll?.temperature ?? null)}°C</div>
           <div className="kpiSub">
-            Station: <strong>{computed?.hottestStation?.stationname ?? "—"}</strong>
+            Station: <strong>{computed?.hottestAllStation?.stationname ?? "—"}</strong>
             <br />
             Timestamp: <strong>{computed?.latestTs ?? "—"}</strong>
           </div>
         </div>
 
         <div className="card span-4">
-          <h2>Q6 — Average temperature (within filters)</h2>
-          <div className="kpi">{fmt(computed?.avgTemp ?? null)}°C</div>
+          <h2>Q6 — Average temperature (all measurements)</h2>
+          <div className="kpi">{fmt(computed?.avgTempAll ?? null)}°C</div>
           <div className="kpiSub">
-            Based on <strong>{computed?.measurementsInScopeCount ?? 0}</strong> measurement rows in scope.
+            Based on <strong>{meta?.measurements_count ?? state.measurements.length}</strong> measurement rows.
           </div>
         </div>
 
         <div className="card span-4">
-          <h2>Q7 — Biggest feel vs actual difference (within filters)</h2>
+          <h2>Q7 — Biggest feel vs actual difference</h2>
           <div className="kpi">
-            {computed?.biggestDiff && typeof computed.biggestDiff.temperature === "number" && typeof computed.biggestDiff.feeltemperature === "number"
-              ? `${fmt(Math.abs(computed.biggestDiff.feeltemperature - computed.biggestDiff.temperature))}°C`
+            {computed?.biggestDiffAll &&
+            typeof computed.biggestDiffAll.temperature === "number" &&
+            typeof computed.biggestDiffAll.feeltemperature === "number"
+              ? `${fmt(Math.abs(computed.biggestDiffAll.feeltemperature - computed.biggestDiffAll.temperature))}°C`
               : "—"}
           </div>
           <div className="kpiSub">
-            Station: <strong>{computed?.diffStation?.stationname ?? "—"}</strong>
+            Station: <strong>{computed?.diffAllStation?.stationname ?? "—"}</strong>
             <br />
-            At: <strong>{computed?.biggestDiff?.timestamp ?? "—"}</strong>
+            At: <strong>{computed?.biggestDiffAll?.timestamp ?? "—"}</strong>
           </div>
         </div>
 
-        <div className="card span-6">
+        <div className="card span-12">
           <h2>Q8 — Station located in the North Sea</h2>
           <div className="kpi">{computed?.northSeaStation?.stationname ?? "—"}</div>
           <div className="kpiSub">
-            Regio: <strong>{computed?.northSeaStation?.regio ?? "—"}</strong>
-            <br />
-            Coordinates:{" "}
+            Regio: <strong>{computed?.northSeaStation?.regio ?? "—"}</strong> · Coordinates:{" "}
             <strong>
               {computed?.northSeaStation?.lat ?? "—"}, {computed?.northSeaStation?.lon ?? "—"}
             </strong>
           </div>
         </div>
+      </div>
 
-        <div className="card span-6">
-          <h2>Trend — {metricLabel(metric)} over time</h2>
-          <div style={{ height: 260 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={computed?.metricSeries ?? []} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.10)" vertical={false} />
-                <XAxis dataKey="timestamp" tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} minTickGap={30} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} width={32} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(15, 23, 42, 0.92)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 10,
-                    color: "rgba(255,255,255,0.92)",
-                  }}
-                />
-                <Line type="monotone" dataKey="value" stroke="#7c3aed" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="kpiSub" style={{ marginTop: 10 }}>
-            Showing {stationId === "all" ? "average across the selected scope" : "the selected station"}.
-            {" "}Units: <strong>{metricUnitSuffix(metric) || "—"}</strong>
-          </div>
-        </div>
-
-        <div className="card span-6">
-          <h2>Top 10 stations — temperature at latest snapshot</h2>
-          <div style={{ height: 300 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <BarChart data={computed?.topHot ?? []} margin={{ top: 10, right: 12, bottom: 30, left: 0 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.10)" vertical={false} />
-                <XAxis
-                  dataKey="station"
-                  tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
-                  interval={0}
-                  angle={-18}
-                  textAnchor="end"
-                  height={50}
-                />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} width={32} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(15, 23, 42, 0.92)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 10,
-                    color: "rgba(255,255,255,0.92)",
-                  }}
-                />
-                <Bar dataKey="temperature" fill="#22c55e" />
-              </BarChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="kpiSub" style={{ marginTop: 10 }}>
-            Filtered by region. Timestamp: <strong>{computed?.latestTs ?? "—"}</strong>
-          </div>
-        </div>
-
-        <div className="card span-6">
-          <h2>Relationship — temperature vs feel temperature (latest snapshot)</h2>
-          <div style={{ height: 300 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <ScatterChart margin={{ top: 10, right: 12, bottom: 10, left: 0 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.10)" />
-                <XAxis
-                  type="number"
-                  dataKey="temperature"
-                  name="Temperature"
-                  unit="°C"
-                  tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
-                />
-                <YAxis
-                  type="number"
-                  dataKey="feeltemperature"
-                  name="Feel temperature"
-                  unit="°C"
-                  tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
-                  width={40}
-                />
-                <Tooltip
-                  cursor={{ strokeDasharray: "3 3" }}
-                  contentStyle={{
-                    background: "rgba(15, 23, 42, 0.92)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 10,
-                    color: "rgba(255,255,255,0.92)",
-                  }}
-                  formatter={(value, name, props) => {
-                    if (name === "temperature" || name === "feeltemperature") return [value, name];
-                    return [value, name];
-                  }}
-                />
-                <Legend />
-                <Scatter name="Stations" data={computed?.scatter ?? []} fill="#7c3aed" />
-              </ScatterChart>
-            </ResponsiveContainer>
-          </div>
-          <div className="kpiSub" style={{ marginTop: 10 }}>
-            Points are stations (filtered by region). Higher vertical gap means larger “feels like” difference.
-          </div>
-        </div>
-
+      <div className="sectionHeader">
+        <div className="sectionTitle">Part 3 — Data Visualization (9B)</div>
+        <div className="sectionNote">Use filters below to explore trends and comparisons.</div>
+      </div>
+      <div className="grid">
         <div className="card span-12">
-          <h2>Environment — precipitation & sun power over time (average)</h2>
-          <div style={{ height: 280 }}>
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={computed?.envSeries ?? []} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
-                <CartesianGrid stroke="rgba(255,255,255,0.10)" vertical={false} />
-                <XAxis dataKey="timestamp" tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} minTickGap={30} />
-                <YAxis tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} width={32} />
-                <Tooltip
-                  contentStyle={{
-                    background: "rgba(15, 23, 42, 0.92)",
-                    border: "1px solid rgba(255,255,255,0.12)",
-                    borderRadius: 10,
-                    color: "rgba(255,255,255,0.92)",
-                  }}
-                />
-                <Legend />
-                <Line type="monotone" dataKey="precipitationAvg" name="Precipitation (avg)" stroke="#60a5fa" strokeWidth={2} dot={false} />
-                <Line type="monotone" dataKey="sunpowerAvg" name="Sun power (avg)" stroke="#f59e0b" strokeWidth={2} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
+          <div className="sectionHeader" style={{ marginTop: 0 }}>
+            <div className="sectionTitle">Region dashboard</div>
+            <div className="pill">
+              Region: <strong>{computed?.selectedEntry?.region ?? "—"}</strong> · Station:{" "}
+              <strong>{computed?.selectedEntry?.station.stationname ?? "—"}</strong>
+            </div>
           </div>
-          <div className="kpiSub" style={{ marginTop: 10 }}>
-            Averages respect your region/time filters (and station filter if you pick a single station).
-          </div>
-        </div>
 
-        <div className="card span-12 imgWrap">
-          <h2>Database ERD (from `ERD1.png`)</h2>
-          <img src={`${import.meta.env.BASE_URL}ERD1.png`} alt="Database ERD" />
+          <div className="controls">
+            <div className="control controlWide">
+              <label className="label">Select a region</label>
+              <div className="row" style={{ marginTop: 0 }}>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const entries = computed?.regionEntries ?? [];
+                    const idx = entries.findIndex((e) => e.region === selectedRegion);
+                    if (!entries.length) return;
+                    const prev = entries[(idx - 1 + entries.length) % entries.length];
+                    setSelectedRegion(prev.region);
+                  }}
+                >
+                  Previous
+                </button>
+                <button
+                  className="btn"
+                  onClick={() => {
+                    const entries = computed?.regionEntries ?? [];
+                    const idx = entries.findIndex((e) => e.region === selectedRegion);
+                    if (!entries.length) return;
+                    const next = entries[(idx + 1) % entries.length];
+                    setSelectedRegion(next.region);
+                  }}
+                >
+                  Next
+                </button>
+              </div>
+              <div style={{ marginTop: 10 }}>
+                <select value={selectedRegion} onChange={(e) => setSelectedRegion(e.target.value)}>
+                  {(computed?.regionEntries ?? []).map((e) => (
+                    <option key={e.region} value={e.region}>
+                      {e.region}
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            <div className="control controlWide">
+              <label className="label">Status</label>
+              <div className="row" style={{ marginTop: 0 }}>
+                <span className="chip">
+                  Latest timestamp: <strong>{computed?.latestTs ?? "—"}</strong>
+                </span>
+                <span className="chip">
+                  Rows in scope: <strong>{computed?.measurementsInScopeCount ?? 0}</strong>
+                </span>
+              </div>
+              <div className="kpiSub" style={{ marginTop: 8 }}>
+                “Most recent measurements” is always the latest snapshot. Time range only affects the trend charts.
+              </div>
+            </div>
+          </div>
+
+          <div className="divider" />
+
+          <p className="subTitle">Most recent measurements</p>
+          <div className="kpiSub" style={{ marginTop: 6 }}>
+            Timestamp: <strong>{computed?.latestTs ?? "—"}</strong>
+          </div>
+
+          <div className="gridInner">
+            <div className="miniCard span-4">
+              <h2>Temperature</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.temperature ?? null)}°C</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Feel temperature</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.feeltemperature ?? null)}°C</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Humidity</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.humidity ?? null, 0)}%</div>
+            </div>
+
+            <div className="miniCard span-4">
+              <h2>Precipitation</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.precipitation ?? null)} mm</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Wind gusts</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.windgusts ?? null)} m/s</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Wind (Bft)</h2>
+              <div className="kpi">{computed?.latestStationMeasurement?.windspeedBft ?? "—"}</div>
+            </div>
+
+            <div className="miniCard span-4">
+              <h2>Ground temperature</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.groundtemperature ?? null)}°C</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Sun power</h2>
+              <div className="kpi">{fmt(computed?.latestStationMeasurement?.sunpower ?? null, 0)}</div>
+            </div>
+            <div className="miniCard span-4">
+              <h2>Timestamp</h2>
+              <div className="kpi" style={{ fontSize: 16 }}>{computed?.latestStationMeasurement?.timestamp ?? "—"}</div>
+              <div className="kpiSub">Latest row for this station.</div>
+            </div>
+          </div>
+
+          <div className="divider" />
+
+          <p className="subTitle">Trend charts</p>
+          <div className="row" style={{ marginTop: 10 }}>
+            <span className="chip">
+              Time range:
+              <span style={{ marginLeft: 6 }} className="btnGroup">
+                <button className={`btn ${timeRange === "6h" ? "btnActive" : ""}`} onClick={() => setTimeRange("6h")}>
+                  6h
+                </button>
+                <button className={`btn ${timeRange === "24h" ? "btnActive" : ""}`} onClick={() => setTimeRange("24h")}>
+                  24h
+                </button>
+                <button className={`btn ${timeRange === "7d" ? "btnActive" : ""}`} onClick={() => setTimeRange("7d")}>
+                  7d
+                </button>
+                <button className={`btn ${timeRange === "all" ? "btnActive" : ""}`} onClick={() => setTimeRange("all")}>
+                  All
+                </button>
+              </span>
+            </span>
+          </div>
+
+          <div className="gridInner">
+            {METRICS.map((m) => {
+              const data = computed?.wideSeriesByMetric[m.key] ?? [];
+              const stationKey = computed?.selectedStationId ? `s${computed.selectedStationId}` : "avg";
+              return (
+                <div key={m.key} className="miniCard span-6">
+                  <h2>
+                    {m.title} {m.unit ? `(${m.unit})` : ""}
+                  </h2>
+                  <div style={{ height: 260 }}>
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={data} margin={{ top: 10, right: 12, bottom: 0, left: 0 }}>
+                        <CartesianGrid stroke="rgba(255,255,255,0.10)" vertical={false} />
+                        <XAxis
+                          dataKey="timestamp"
+                          tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }}
+                          minTickGap={30}
+                        />
+                        <YAxis tick={{ fill: "rgba(255,255,255,0.65)", fontSize: 11 }} width={32} />
+                        <Tooltip
+                          contentStyle={{
+                            background: "rgba(15, 23, 42, 0.92)",
+                            border: "1px solid rgba(255,255,255,0.12)",
+                            borderRadius: 10,
+                            color: "rgba(255,255,255,0.92)",
+                          }}
+                        />
+                        <Line type="monotone" dataKey={stationKey} stroke={m.color} strokeWidth={2} dot={false} />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
