@@ -284,7 +284,7 @@ export function App() {
 
       <div className="sectionHeader">
         <div className="sectionTitle">Part 2 — Data Analysis (Q5–Q8)</div>
-        <div className="sectionNote">These answers are based on the full dataset (no filters).</div>
+        <div className="sectionNote">These answers are based on the full dataset since my first fetch.</div>
       </div>
       <div className="grid">
         <div className="card span-4">
