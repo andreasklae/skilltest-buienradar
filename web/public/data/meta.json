@@ -1,6 +1,6 @@
 {
-  "generated_at_utc": "2026-01-08T11:50:22Z",
+  "generated_at_utc": "2026-01-08T12:52:54Z",
   "db_path": "data/weather.sqlite",
   "stations_count": 40,
-  "measurements_count": 7719
+  "measurements_count": 7759
 }
