@@ -2,9 +2,9 @@ name: Update weather data (SQLite + JSON exports)
 
 on:
   workflow_dispatch:
-  schedule:
+  #schedule: disabled
     # Buienradar updates ~ every 20 minutes
-   # - cron: "*/20 * * * *" disabled
+   #- cron: "*/20 * * * *" 
 
 permissions:
   contents: write
